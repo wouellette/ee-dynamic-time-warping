@@ -5,8 +5,6 @@
 // Import external dependencies
 var palettes = require('users/gena/packages:palettes');
 var wrapper = require('users/adugnagirma/gee_s1_ard:wrapper');
-
-// Import local dependencies
 var S2Masks = require('users/soilwatch/soilErosionApp:s2_masks.js');
 var S2Composites = require('users/soilwatch/soilErosionApp:s2_composites.js');
 
@@ -302,8 +300,11 @@ var dtw = ee.Image('users/soilwatch/Sudan/dtw_sennar_s1s2_2017_2020'); // Commen
 var dtw_score = dtw.select('score_2020');
 var dtw_class = dtw.select('classification_2020');
 
-var vito_lulc_crop = ee.Image("COPERNICUS/Landcover/100m/Proba-V-C3/Global/2019").select('discrete_classification').eq(40);
-var esri_lulc_crop = ee.ImageCollection("projects/sat-io/open-datasets/landcover/ESRI_Global-LULC_10m").mosaic().eq(6);
+// VITO Land Cover dataset is used to generate a cropland mask.
+// The dataset uses a 3-year epoch of time series data to generate the dominant land cover at any given location.
+// This gives us a good estimation of cropland extent for the period 2016-2019, able to disregard single year fallowing events.
+var vito_lulc_crop = ee.Image("COPERNICUS/Landcover/100m/Proba-V-C3/Global/2019")
+                     .select('discrete_classification').eq(40);
 
 Map.addLayer(dtw_score,
              {palette: score_palette, min: 0, max: 20000},
