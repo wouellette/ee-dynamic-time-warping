@@ -11,6 +11,7 @@ Only the JS API has been developed. The Python API implementation will be coming
 Dynamic Time Warping is an alternative to the somewhat rigid Euclidean Distance for comparing time series alignment.
 
 The recent literature on applying DTW to satellite images time series (SITS) has been integrated in the implementation, namely, the following:
+
 The time-weighted DTW (TWDTW) approach taken from: [Maus, V., Câmara, G., Cartaxo, R., Sanchez, A., Ramos, F. M., & De Queiroz, G. R. (2016).
                                           A time-weighted dynamic time warping method for land-use and land-cover mapping.
                                           IEEE Journal of Selected Topics in Applied Earth Observations and Remote Sensing, 9(8), 3729-3739.](http://www.esensing.org/docs/Maus_TWDTW_JSTARS2016.pdf)
