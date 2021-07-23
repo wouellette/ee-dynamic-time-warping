@@ -1,6 +1,6 @@
 # Multi-Dimensional Dynamic Time Warping Implementation in Google Earth Engine
 
-![Euclidean vs DTW comparison](images\Euclidean_vs_DTW.jpg)
+![Euclidean vs DTW comparison](images/Euclidean_vs_DTW.jpg)
 
 ## Introduction
 A multi-dimensional Dynamic Time Warping (DTW) implementation to classify remote sensing image time series dwelling in Google Earth Engine.
@@ -39,7 +39,7 @@ The script implementing this use case located under the `examples` folder, and c
 
 The story behind this use case is further described in the following [medium blog post](https://medium.com/@ouelletteweo/dynamic-time-warping-for-satellite-image-time-series-classification-872d9e54b8d).
 
-![Sudan Sennar DTW example](images\Sudan_TWDTW_example.gif)
+![Sudan Sennar DTW example](images/Sudan_TWDTW_example.gif)
 
 2. **TBC**
 
