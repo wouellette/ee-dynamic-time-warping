@@ -146,10 +146,10 @@ var DTWClassification = function(year, collection_type){
 
   // Re-order the stack order before converting it to a DTW-ready input array
   var s1s2_stack = s1_stack.addBands(s2_stack)
-                   .select(ee.List(S1_BAND_LIST.concat(S2_BAND_LIST)).add(DOY_BAND)
-                   .map(function(band){return ee.String(band).cat('.*')}))
-                   .unmask(0)
-                   .clip(county.geometry());
+                   .select(ee.List(S1_BAND_LIST.concat(S2_BAND_LIST)).add(DOY_BAND) // Make sure DOY band goes last
+                   .map(function(band){return ee.String(band).cat('.*')})) // Add regex for band selection
+                   .unmask(0) // DTW does not tolerate null values, so gap fill to 0 if gaps remain
+                   .clip(county.geometry()); // Clip again to remask unmasked values outside of area of interest
 
   var band_names = s1s2_stack.bandNames();
 
