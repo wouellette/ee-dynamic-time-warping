@@ -166,28 +166,29 @@ exports.DTWDist = function(patterns_arr, image_arr, options){
  *
  * @param {Number} class_no: Integer of the label class to retrieve from the feature collection.
  * @param {Number} band_no: Number of bands (excluding the Day of Year band).
- * @param {Number} timeseries_len: Number of timestamps in the time series.
+ * @param {Number} patterns_len:  The length of the reference pattern time series.
  * @param {List} band_names: The list of band names containing the pattern/signature values to retrieve from the feature collection.
- *                           The band order matters, and should be expressed as regex,
- *                           for instance for ndvi, evi and day of year (doy) bands: [ndvi.*, evi.*, doy.*] (with doy bands last)
+ *                           The Day of Year band (doy) must be placed last; for instance for ndvi, VV and day of year (doy) bands:
+ *                           [ndvi, ndvi_1, ndvi_2, ndvi_n, evi, evi_1, evi_2, evi_n, doy, doy_1, doy_2, doy_n].
  * @returns {Array}
  * @ignore
  */
-exports.prepareSignatures = function(signatures, class_name, class_no, band_no, timeseries_len, band_names){
+exports.prepareSignatures = function(signatures, class_name, class_no, band_no, patterns_len, band_names){
   var train_points = signatures.filter(ee.Filter.eq(class_name, class_no)).select(band_names);
   var feature_list = train_points.toList(train_points.size())
-  var table_points_list = feature_list.map(function (feat){return ee.List(band_names).map(
-    function (f){return ee.Feature(feat).get(f)})})
+  var table_points_list = feature_list.map(function (feat){
+    return ee.List(band_names).map(function (band){return ee.Feature(feat).get(band)})
+  });
 
-  return ee.Array(table_points_list).reshape([-1, band_no+1, timeseries_len]).toInt16()
+  return ee.Array(table_points_list).reshape([-1, band_no+1, patterns_len]).toInt16()
 }
 
 /**
  * A utility that converts a multi-band image containing the time series' timestamps to a dtw-ready array.
  * @param {Image} image: The multi-band image containing the time series' timestamps.
  * @param {List} band_names: The list of band names containing the pattern/signature values to retrieve from the feature collection.
- *                           The band order matters, and should be expressed as regex,
- *                           for instance for ndvi, evi and day of year (doy) bands: [ndvi.*, evi.*, doy.*] (with doy bands last)
+ *                           The Day of Year band (doy) must be placed last; for instance for ndvi, VV and day of year (doy) bands:
+ *                           [ndvi, ndvi_1, ndvi_2, ndvi_n, evi, evi_1, evi_2, evi_n, doy, doy_1, doy_2, doy_n].
  * @returns {Array}
  * @ignore
  */
