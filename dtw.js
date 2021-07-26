@@ -186,18 +186,21 @@ exports.prepareSignatures = function(signatures, class_name, class_no, band_no, 
 /**
  * A utility that converts a multi-band image containing the time series' timestamps to a dtw-ready array.
  * @param {Image} image: The multi-band image containing the time series' timestamps.
+ * @param {Number} band_no: Number of bands (excluding the Day of Year band) to iterate over.
+ * @param {Number} timeseries_len: The length of the image time series.
  * @param {List} band_names: The list of band names containing the pattern/signature values to retrieve from the feature collection.
  *                           The Day of Year band (doy) must be placed last; for instance for ndvi, VV and day of year (doy) bands:
  *                           [ndvi, ndvi_1, ndvi_2, ndvi_n, evi, evi_1, evi_2, evi_n, doy, doy_1, doy_2, doy_n].
  * @returns {Array}
  * @ignore
  */
-exports.prepareBands = function(image, band_names){
+exports.prepareBands = function(image, band_no, timeseries_len, band_names){
   var arr_list = ee.List([]);
-  var band_image_arr = ee.List(band_names.slice(1)).iterate(function(names, img){
-    var image_arr = image.select([names]).toArray().toArray(1).toInt16()
-    return ee.Image(img).arrayCat(image_arr, 1)
-  }, image.select(band_names.slice(0, 1)).toArray().toArray(1).toInt16())
+  var band_image_arr = ee.List.sequence({start:timeseries_len, step: timeseries_len, count:band_no})
+                       .iterate(function(i, img){
+    var image_arr = image.select(band_names.slice(i, ee.Number(i).add(timeseries_len))).toArray().toArray(1).toInt16();
+    return ee.Image(img).arrayCat(image_arr, 1)},
+    image.select(band_names.slice(0, timeseries_len)).toArray().toArray(1).toInt16());
 
   return band_image_arr
 }
