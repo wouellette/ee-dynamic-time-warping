@@ -11,16 +11,21 @@ var S2Composites = require('users/soilwatch/soilErosionApp:s2_composites.js');
 // Import the Dynamic Time Warping script
 var DTW = require('users/soilwatch/functions:dtw.js');
 
-// Initial parameters
-var AGG_INTERVAL = 30 // Number of days to use to create the temporal composite for 2020
-var CLASS_NAME = 'lc_class' // Property name of the feature collection containing the crop type class attribute
-var BETA = 50; // Beta parameter for the TimeWeighted-DTW, controlling the tolerance (in days) of the weighting.
-var ALPHA = 0.1; // ALPHA parameter for the TimeWeighted-DTW, controlling steepness of the logistic distribution
+// Input data parameters
+var CLASS_NAME = 'lc_class'; // Property name of the feature collection containing the crop type class attribute
+var AGG_INTERVAL = 30; // Number of days to use to create the temporal composite for 2020
 var TIMESERIES_LEN = 6; // Number of timestamps in the time series
 var PATTERNS_LEN = 6; // Number of timestamps for the reference data points
-var BAND_NO = 7; // Number of bands to use for the DTW. Currently,
-                 // The 7 bands are: S2 NDVI, S2 B2, S2 B3, S2 B11, S2 B12, S1 VV, S1 VH
 var CLASS_NO = 7; // Number of classes to map. Those are: builtup, water, trees, baresoil, cropland, rangeland, wetland
+var S2_BAND_LIST = ['B2', 'B3', 'B11', 'B12', 'ndvi']; // S2 Bands to use as DTW input
+var S1_BAND_LIST = ['VV', 'VH']; // S1 Bands to use as DTW input
+var BAND_NO = S1_BAND_LIST.concat(S2_BAND_LIST).length; // Number of bands to use for the DTW. Currently,
+                 // The default 7 bands are: S2 NDVI, S2 B2, S2 B3, S2 B11, S2 B12, S1 VV, S1 VH
+var DOY_BAND = 'doy'; // Name of the Day of Year band for the time-aware DTW implementation
+
+// DTW time parameters
+var BETA = 50; // Beta parameter for the Time-Weighted DTW, controlling the tolerance (in days) of the weighting.
+var ALPHA = 0.1; // ALPHA parameter for the Time-Weighted DTW, controlling steepness of the logistic distribution
 
 // Import external water mask dataset
 var not_water = ee.Image("JRC/GSW1_2/GlobalSurfaceWater").select('max_extent').eq(0); // JRC Global Surface Water mask
@@ -64,10 +69,6 @@ ee.FeatureCollection(ee.FeatureCollection("FAO/GAUL/2015/level2")
 Map.centerObject(county.geometry());
 Map.layers().reset([ui.Map.Layer(county, {}, adm2_name)]);
 
-// Specify band list required for the plots to generate
-var s2_band_list = ['B2', 'B3', 'B11', 'B12', 'ndvi'];
-var s1_band_list = ['VV', 'VH'];
-
 // Function that performs DTW land classification for a given year.
 var DTWClassification = function(year, collection_type){
 
@@ -81,11 +82,10 @@ var DTWClassification = function(year, collection_type){
                           .filterDate(date_range.get('start'), date_range.get('end'))
                           .map(S2Masks.addCloudShadowMask(not_water, 1e4))
                           .map(S2Masks.applyCloudShadowMask)
-                          .map(addNDVI) // Add NDVI to band list
-                          .select(['B2','B3','B4','B5','B6','B7','B8','B8A','B11','B12', 'ndvi']);
+                          .map(addNDVI); // Add NDVI to band list
 
   // Generate harmonized monthly time series of FCover as input to the vegetation factor V
-  var s2_ts = S2Composites.S2HarmonizedTS(masked_collection, s2_band_list, date_range, AGG_INTERVAL, county.geometry());
+  var s2_ts = S2Composites.S2HarmonizedTS(masked_collection, S2_BAND_LIST, date_range, AGG_INTERVAL, county.geometry());
 
   // Replace masked pixels by the mean of the previous and next timestamps
   // And add a Day of Year (DOY) band
@@ -98,7 +98,7 @@ var DTWClassification = function(year, collection_type){
                                                                  currentDate.advance(AGG_INTERVAL+1, 'day')).mean();
                             // replace all masked values
                             var ddiff = currentDate.difference(ee.Date(ee.String(date_range.get('start'))), 'day');
-                            return meanImage.where(image, image).addBands(ee.Image(ddiff).rename('doy').toInt16());
+                            return meanImage.where(image, image).addBands(ee.Image(ddiff).rename(DOY_BAND).toInt16());
                           })
                           .iterate(function(image, previous){return ee.Image(previous).addBands(image)}, ee.Image([])));
 
@@ -141,20 +141,17 @@ var DTWClassification = function(year, collection_type){
                                           .set({'system:time_start': image.get('system:time_start')})});
 
   // Create equally-spaced temporal composites covering the date range and convert to multi-band image
-  var s1_stack = ee.Image(S2Composites.S2HarmonizedTS(s1_ts, s1_band_list, date_range, AGG_INTERVAL, county.geometry())
+  var s1_stack = ee.Image(S2Composites.S2HarmonizedTS(s1_ts, S1_BAND_LIST, date_range, AGG_INTERVAL, county.geometry())
                           .iterate(function(image, previous){return ee.Image(previous).addBands(image)}, ee.Image([])));
 
   // Re-order the stack order before converting it to a DTW-ready input array
-  var s1s2_stack = s2_stack.select('B2.*')
-                   .addBands(s2_stack.select('B3.*'))
-                   .addBands(s2_stack.select('B11.*'))
-                   .addBands(s2_stack.select('B12.*'))
-                   .addBands(s2_stack.select('ndv.*'))
-                   .addBands(s1_stack.select('VV.*'))
-                   .addBands(s1_stack.select('VH.*'))
-                   .addBands(s2_stack.select('do.*'))
+  var s1s2_stack = s1_stack.addBands(s2_stack)
+                   .select(ee.List(S1_BAND_LIST.concat(S2_BAND_LIST)).add(DOY_BAND)
+                   .map(function(band){return ee.String(band).cat('.*')}))
                    .unmask(0)
                    .clip(county.geometry());
+
+  var band_names = s1s2_stack.bandNames();
 
   // Sample the band values for each training data points
   // If reference signatures are already defined, it uses those signatures rather than sampling them again.
@@ -177,6 +174,7 @@ var DTWClassification = function(year, collection_type){
                                                    BAND_NO,
                                                    PATTERNS_LEN,
                                                    band_names);
+
     // Compute the class-wise DTW distance
     return ee.ImageCollection(DTW.DTWDist(training_data_list,
                                           ndvi_image_list,
@@ -196,10 +194,10 @@ var DTWClassification = function(year, collection_type){
   };
 
   // Prepare the input time series of images into a DTW-ready EE array
-  var ndvi_image_list = ee.Image(DTW.prepareBands(s1s2_stack, band_list));
-
-  // Extract full list of band names
-  var band_names = s1s2_stack.bandNames();
+  var ndvi_image_list = ee.Image(DTW.prepareBands(s1s2_stack,
+                                                  BAND_NO,
+                                                  TIMESERIES_LEN,
+                                                  band_names));
 
   // Map the DTW distance function over each land cover class
   var dtw_image_list = reference_signatures_agg.map(dtw_min_dist);
@@ -263,9 +261,6 @@ var classification_palette = ['#d63000',
 // DTW Dissimilarity score palette
 var score_palette = palettes.colorbrewer.RdYlGn[9].reverse();
 
-// Band list to retain as input to multi-dimensional DTW
-var band_list = ['B2.*', 'B3.*', 'B11.*', 'B12.*', 'ndv.*', 'VV.*', 'VH.*', 'do.*'];
-
 // Compute the DTW classification for the year 2020.
 var dtw_outputs = DTWClassification('2020', 'COPERNICUS/S2');
 var dtw = dtw_outputs[0]; // Extract the DTW dissimilarity score and hard classification
@@ -289,7 +284,6 @@ var imageVisParam = {bands: ["ndvi_5", "ndvi_3", "ndvi_1"],
 };
 
 // The NDVI/EVI images are masked with the 2020 crop mask generated as part of the TCP project.
-//Map.addLayer(s2_stack_2019, imageVisParam, 'ndvi stack 2019');
 Map.addLayer(s1s2_stack, imageVisParam, 'ndvi stack 2020');
 
 imageVisParam['bands'] = ["VV_5", "VV_3", "VV_1"];
