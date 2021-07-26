@@ -56,7 +56,7 @@ exports.DTWDist = function(patterns_arr, image_arr, options){
 
   patterns_arr = ee.Array(patterns_arr);
   var patterns_no = options.patterns_no || patterns_arr.length().get([0]);
-  var band_no = options.band_no || patterns_arr.length().get([1]).getInfo();
+  var band_no = options.band_no || patterns_arr.length().get([1]).subtract(1).getInfo(); // Remove the doy band
   var timeseries_len = options.timeseries_len || image_arr.length().get([0]).getInfo();
   var patterns_len = options.patterns_len || patterns_arr.length().get([2]).getInfo();
   var constraint_type = options.constraint_type || 'time-weighted';
