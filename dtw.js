@@ -196,7 +196,7 @@ exports.prepareSignatures = function(signatures, class_name, class_no, band_no, 
  */
 exports.prepareBands = function(image, band_no, timeseries_len, band_names){
   var arr_list = ee.List([]);
-  var band_image_arr = ee.List.sequence({start:timeseries_len, step: timeseries_len, count:band_no})
+  var band_image_arr = ee.List.sequence({start: timeseries_len, step: timeseries_len, count: band_no})
                        .iterate(function(i, img){
     var image_arr = image.select(band_names.slice(i, ee.Number(i).add(timeseries_len))).toArray().toArray(1).toInt16();
     return ee.Image(img).arrayCat(image_arr, 1)},

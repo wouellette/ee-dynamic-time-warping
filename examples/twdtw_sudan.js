@@ -383,7 +383,8 @@ generateGIF(ee.ImageCollection(ee.List([dtw.select('classification_2020').rename
 
 // Export Video of the temporal NDVI composites for each year produced
 Export.video.toDrive({
-  collection: ee.ImageCollection(s1s2_list.map(function(img){return ee.Image(img).divide(100).toByte()})).select(["ndvi_5", "ndvi_3", "ndvi_1"]),
+  collection: ee.ImageCollection(s1s2_list.map(function(img){return ee.Image(img).divide(100).toByte()}))
+              .select(["ndvi_5", "ndvi_3", "ndvi_1"]),
   description:'temporal ndvi rgb',
   region: county.geometry(),
   scale: 100,
@@ -408,17 +409,14 @@ Map.addLayer(styled_td.style({styleProperty: "style"}), {}, 'crop type sample po
 
 // Export classified data. This is recommended to get the full extent of the data generated and saved,
 // so it can be explored and consulted seamlessly.
-Export.image.toDrive({
+Export.image.toAsset({
   image: dtw,
-  description:'dtw_classification',
+  description:'dtw_sennar_s1s2_2017_2020',
+  assetId: 'users/soilwatch/Sudan/dtw_sennar_s1s2_2017_2020',
   region: county.geometry(),
   crs: 'EPSG:4326',
   scale: 10,
-  maxPixels:1e13,
-  fileFormat: 'GeoTIFF',
-  formatOptions: {
-   cloudOptimized: true
-  }
+  maxPixels:1e13
 });
 
 // Create a legend for the different crop types
