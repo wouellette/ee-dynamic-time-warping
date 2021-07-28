@@ -155,7 +155,7 @@ exports.DTWDist = function(patterns_arr, image_arr, options){
                                           .arrayFlatten([['DTW']]);
   });
 
-  return ee.ImageCollection(dtw_image_list).min().toInt16();
+  return ee.ImageCollection(dtw_image_list).min().toUint16();
 }
 
 
