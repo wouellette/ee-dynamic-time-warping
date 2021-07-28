@@ -125,7 +125,7 @@ var DTWClassification = function(year, collection_type){
                    SPECKLE_FILTER_NR_OF_IMAGES: 10,
                    //4. Radiometric terrain normalization
                    APPLY_TERRAIN_FLATTENING: true,
-                   DEM: ee.Image('USGS/SRTMGL1_003'),
+                   DEM: dem,
                    TERRAIN_FLATTENING_MODEL: 'VOLUME', // More desirable for vegetation monitoring.
                                                        //Use "SURFACE" if working on urban or bare soil applications
                    TERRAIN_FLATTENING_ADDITIONAL_LAYOVER_SHADOW_BUFFER: 0,
