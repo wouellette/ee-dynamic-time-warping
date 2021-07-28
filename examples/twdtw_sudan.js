@@ -112,8 +112,10 @@ var DTWClassification = function(year, collection_type){
   var parameter = {//1. Data Selection
                    START_DATE: date_range.get('start'),
                    STOP_DATE: date_range.get('end'),
-                   POLARIZATION:'VVVH',
-                   ORBIT : 'DESCENDING',
+                   POLARIZATION:'VVVH', // The polarization available may differ depending on where you are on the globe
+                   ORBIT : 'DESCENDING', // The orbit availability may differ depending on where you are on the globe
+                   // Check out this page to find out what parameters suit your area:
+                   // https://sentinels.copernicus.eu/web/sentinel/missions/sentinel-1/observation-scenario
                    GEOMETRY: county.geometry(),
                    //2. Additional Border noise correction
                    APPLY_ADDITIONAL_BORDER_NOISE_CORRECTION: true,
