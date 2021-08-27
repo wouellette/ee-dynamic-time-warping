@@ -146,7 +146,7 @@ var DTWClassification = function(year, collection_type){
                                           .set({'system:time_start': image.get('system:time_start')})});
 
   // Create equally-spaced temporal composites covering the date range and convert to multi-band image
-  var s1_stack = ee.Image(composites.harmonizedTS(s1_ts, S1_BAND_LIST, date_range, AGG_INTERVAL, county.geometry())
+  var s1_stack = ee.Image(composites.harmonizedTS(s1_ts, S1_BAND_LIST, time_intervals, {agg_type: 'geomedian'})
                           .iterate(function(image, previous){return ee.Image(previous).addBands(image)}, ee.Image([])));
 
   // Re-order the stack order before converting it to a DTW-ready input array
