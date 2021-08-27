@@ -6,7 +6,7 @@
 var palettes = require('users/gena/packages:palettes');
 var wrapper = require('users/adugnagirma/gee_s1_ard:wrapper');
 var S2Masks = require('users/soilwatch/soilErosionApp:s2_masks.js');
-var S2Composites = require('users/soilwatch/soilErosionApp:s2_composites.js');
+var composites = require('users/soilwatch/soilErosionApp:composites.js');
 
 // Import the Dynamic Time Warping script
 var DTW = require('users/soilwatch/functions:dtw.js');
@@ -85,7 +85,7 @@ var DTWClassification = function(year, collection_type){
                           .map(addNDVI); // Add NDVI to band list
 
   // Generate harmonized monthly time series of FCover as input to the vegetation factor V
-  var s2_ts = S2Composites.S2HarmonizedTS(masked_collection, S2_BAND_LIST, date_range, AGG_INTERVAL, county.geometry());
+  var s2_ts = composites.harmonizedTS(masked_collection, S2_BAND_LIST, time_intervals, {agg_type: 'geomedian'});
 
   // Replace masked pixels by the mean of the previous and next timestamps
   // And add a Day of Year (DOY) band
@@ -143,7 +143,7 @@ var DTWClassification = function(year, collection_type){
                                           .set({'system:time_start': image.get('system:time_start')})});
 
   // Create equally-spaced temporal composites covering the date range and convert to multi-band image
-  var s1_stack = ee.Image(S2Composites.S2HarmonizedTS(s1_ts, S1_BAND_LIST, date_range, AGG_INTERVAL, county.geometry())
+  var s1_stack = ee.Image(composites.harmonizedTS(s1_ts, S1_BAND_LIST, date_range, AGG_INTERVAL, county.geometry())
                           .iterate(function(image, previous){return ee.Image(previous).addBands(image)}, ee.Image([])));
 
   // Re-order the stack order before converting it to a DTW-ready input array
