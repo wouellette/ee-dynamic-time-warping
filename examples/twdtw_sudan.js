@@ -84,6 +84,9 @@ var DTWClassification = function(year, collection_type){
                           .map(S2Masks.applyCloudShadowMask)
                           .map(addNDVI); // Add NDVI to band list
 
+  // Generate a list of time intervals for which to generate a harmonized time series
+  var time_intervals = composites.extractTimeRanges(date_range.get('start'), date_range.get('end'), 30);
+
   // Generate harmonized monthly time series of FCover as input to the vegetation factor V
   var s2_ts = composites.harmonizedTS(masked_collection, S2_BAND_LIST, time_intervals, {agg_type: 'geomedian'});
 
