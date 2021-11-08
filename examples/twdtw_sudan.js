@@ -302,8 +302,7 @@ var dtw_class = dtw.select('classification_2020');
 // VITO Land Cover dataset is used to generate a cropland mask.
 // The dataset uses a 3-year epoch of time series data to generate the dominant land cover at any given location.
 // This gives us a good estimation of cropland extent for the period 2016-2019, able to disregard single year fallowing events.
-var vito_lulc_crop = ee.Image("COPERNICUS/Landcover/100m/Proba-V-C3/Global/2019")
-                     .select('discrete_classification').eq(40);
+var vito_lulc_crop = ee.ImageCollection("ESA/WorldCover/v100").filterBounds(county).mosaic().eq(40);
 
 Map.addLayer(dtw_score,
              {palette: score_palette, min: 0, max: 20000},
