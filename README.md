@@ -36,7 +36,7 @@ var DTW = require('users/soilwatch/functions:dtw.js');
 
 1. **Multi-year land cover mapping using TWDTW to identify abandoned cropland suitable for rangeland restoration**
 
-The script implementing this use case located under the `examples` folder, and can be accessed via this [link](https://code.earthengine.google.com/25f2091a738c3f1f063b4401d84969c4).
+The script implementing this use case located under the `examples` folder, and can be accessed via this [link](https://code.earthengine.google.com/d761374995dc3a23719f5d3572f7f2cc).
 
 The story behind this use case is further described in the following [medium blog post](https://medium.com/@ouelletteweo/dynamic-time-warping-for-satellite-image-time-series-classification-872d9e54b8d).
 
