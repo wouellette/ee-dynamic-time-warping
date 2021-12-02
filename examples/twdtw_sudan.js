@@ -88,22 +88,7 @@ var DTWClassification = function(year, collection_type){
   var time_intervals = composites.extractTimeRanges(date_range.get('start'), date_range.get('end'), 30);
 
   // Generate harmonized monthly time series of FCover as input to the vegetation factor V
-  var s2_ts = composites.harmonizedTS(masked_collection, S2_BAND_LIST, time_intervals, {agg_type: 'geomedian'});
-
-  // Replace masked pixels by the mean of the previous and next timestamps
-  // And add a Day of Year (DOY) band
-  // This is the linear interpolation approach,
-  // which is more lightweight than other gap-filling approaches like Savitzky-Golay or harmonic regression
-  var s2_stack = ee.Image(s2_ts
-                          .map(function(image){
-                            var currentDate = ee.Date(image.get('system:time_start'));
-                            var meanImage = s2_ts.filterDate(currentDate.advance(-AGG_INTERVAL-1, 'day'),
-                                                                 currentDate.advance(AGG_INTERVAL+1, 'day')).mean();
-                            // replace all masked values
-                            var ddiff = currentDate.difference(ee.Date(ee.String(date_range.get('start'))), 'day');
-                            return meanImage.where(image, image).addBands(ee.Image(ddiff).rename(DOY_BAND).toInt16());
-                          })
-                          .iterate(function(image, previous){return ee.Image(previous).addBands(image)}, ee.Image([])));
+  var s2_stack = composites.harmonizedTS(masked_collection, S2_BAND_LIST, time_intervals, {agg_type: 'geomedian'});
 
   // Define S1 preprocessing parameters, as per:
   // Version: v1.2
@@ -146,15 +131,37 @@ var DTWClassification = function(year, collection_type){
                                           .set({'system:time_start': image.get('system:time_start')})});
 
   // Create equally-spaced temporal composites covering the date range and convert to multi-band image
-  var s1_stack = ee.Image(composites.harmonizedTS(s1_ts, S1_BAND_LIST, time_intervals, {agg_type: 'geomedian'})
-                          .iterate(function(image, previous){return ee.Image(previous).addBands(image)}, ee.Image([])));
+  var s1_stack = composites.harmonizedTS(s1_ts, S1_BAND_LIST, time_intervals, {agg_type: 'geomedian'});
+                          //.iterate(function(image, previous){return ee.Image(previous).addBands(image)}, ee.Image([])));
 
-  // Re-order the stack order before converting it to a DTW-ready input array
-  var s1s2_stack = s1_stack.addBands(s2_stack)
-                   .select(ee.List(S1_BAND_LIST.concat(S2_BAND_LIST)).add(DOY_BAND) // Make sure DOY band goes last
-                   .map(function(band){return ee.String(band).cat('.*')})) // Add regex for band selection
-                   .unmask(0) // DTW does not tolerate null values, so gap fill to 0 if gaps remain
-                   .clip(county.geometry()); // Clip again to remask unmasked values outside of area of interest
+    var filter = ee.Filter.equals({
+      leftField: 'system:time_start',
+      rightField: 'system:time_start'
+    });
+
+    // Create the join.
+    var simpleJoin = ee.Join.inner();
+
+    // Inner join
+    var innerJoin = ee.ImageCollection(simpleJoin.apply(s1_stack, s2_stack, filter))
+
+    var joined = innerJoin.map(function(feature) {
+      return ee.Image.cat(feature.get('primary'), feature.get('secondary'));
+    });
+
+    joined = joined.map(function(image){
+      var currentDate = ee.Date(image.get('system:time_start'));
+      var meanImage = joined.filterDate(currentDate.advance(-AGG_INTERVAL-1, 'day'),
+                                           currentDate.advance(AGG_INTERVAL+1, 'day')).mean();
+      // replace all masked values
+      var ddiff = currentDate.difference(ee.Date(ee.String(date_range.get('start'))), 'day');
+      return meanImage.where(image, image).unmask(0)
+      .addBands(ee.Image(ddiff).rename('doy').toInt16())
+      .copyProperties(image, ['system:time_start']);
+    });
+
+  var s1s2_stack = ee.Image(joined.iterate(function(image, previous){return ee.Image(previous).addBands(image)}, ee.Image([])))
+                   .select(ee.List(S1_BAND_LIST.concat(S2_BAND_LIST)).add(DOY_BAND).map(function(band){return ee.String(band).cat('.*')}));
 
   var band_names = s1s2_stack.bandNames();
 
@@ -182,7 +189,7 @@ var DTWClassification = function(year, collection_type){
 
     // Compute the class-wise DTW distance
     return ee.ImageCollection(DTW.DTWDist(training_data_list,
-                                          ndvi_image_list,
+                                          joined.select('[^'+DOY_BAND+'].*'),
                                           {patterns_no: val,
                                           band_no: BAND_NO,
                                           timeseries_len: TIMESERIES_LEN,
@@ -197,12 +204,6 @@ var DTWClassification = function(year, collection_type){
            // This is useful/necessary to generate the hard classification map from the dissimilarity values
            .addBands(ee.Image(key).toByte().rename('band'));
   };
-
-  // Prepare the input time series of images into a DTW-ready EE array
-  var ndvi_image_list = ee.Image(DTW.prepareBands(s1s2_stack,
-                                                  BAND_NO,
-                                                  TIMESERIES_LEN,
-                                                  band_names));
 
   // Map the DTW distance function over each land cover class
   var dtw_image_list = reference_signatures_agg.map(dtw_min_dist);
@@ -289,13 +290,13 @@ var imageVisParam = {bands: ["ndvi_5", "ndvi_3", "ndvi_1"],
 };
 
 // The NDVI/EVI images are masked with the 2020 crop mask generated as part of the TCP project.
-Map.addLayer(s1s2_stack, imageVisParam, 'ndvi stack 2020');
+Map.addLayer(s1s2_stack.clip(county.geometry()), imageVisParam, 'ndvi stack 2020');
 
 imageVisParam['bands'] = ["VV_5", "VV_3", "VV_1"];
-Map.addLayer(s1s2_stack, imageVisParam, 'VV stack 2020');
+Map.addLayer(s1s2_stack.clip(county.geometry()), imageVisParam, 'VV stack 2020');
 
 // Load the pre-generated layers from assets as producing the data live takes a while to load and display, and may result in memory errors
-var dtw = ee.Image('users/soilwatch/Sudan/dtw_sennar_s1s2_2017_2020'); // Comment out this line to produce live data
+var dtw = ee.Image('users/soilwatch/Sudan/dtw_sennar_s1s2_2017_2020').clip(county.geometry()); // Comment out this line to produce live data
 var dtw_score = dtw.select('score_2020');
 var dtw_class = dtw.select('classification_2020');
 
@@ -304,11 +305,11 @@ var dtw_class = dtw.select('classification_2020');
 // This gives us a good estimation of cropland extent for the period 2016-2019, able to disregard single year fallowing events.
 var vito_lulc_crop = ee.ImageCollection("ESA/WorldCover/v100").filterBounds(county.geometry()).mosaic().eq(40);
 
-Map.addLayer(dtw_score,
+Map.addLayer(dtw_score.clip(county.geometry()),
              {palette: score_palette, min: 0, max: 20000},
              'DTW dissimilarity score (30 days signature, 30 days images)');
 
-Map.addLayer(dtw_class.updateMask(crop_mask),
+Map.addLayer(dtw_class.updateMask(crop_mask).clip(county.geometry()),
              {palette: classification_palette.slice(0, classification_palette.length-2), min: 1, max: CLASS_NO},
              'DTW classification (30 days signature, 30 days images)');
 
@@ -326,14 +327,14 @@ var dtw_class_strat = dtw_class.where(dtw_class.eq(6) // 3 previous years identi
                                       ).and(vito_lulc_crop),
                                       ee.Image(9));
 
-Map.addLayer(dtw_class_strat.updateMask(crop_mask),
+Map.addLayer(dtw_class_strat.updateMask(crop_mask).clip(county.geometry()),
              {palette: classification_palette, min: 1, max: CLASS_NO+2},
              'DTW classification: active/abandoned cropland distinction');
 
 // Generate are histogram (in hectares) of the respective land cover classes for 2020
 var area_histogram = ee.Dictionary(dtw_class_strat.updateMask(crop_mask).reduceRegion(
   {reducer: ee.Reducer.frequencyHistogram(),
-  geometry:county.geometry(),
+  geometry: county.geometry(),
   scale: 100,
   maxPixels:1e13,
   tileScale: 4
@@ -414,7 +415,7 @@ Map.addLayer(styled_td.style({styleProperty: "style"}), {}, 'crop type sample po
 // Export classified data. This is recommended to get the full extent of the data generated and saved,
 // so it can be explored and consulted seamlessly.
 Export.image.toAsset({
-  image: dtw,
+  image: dtw.clip(county.geometry()),
   description:'dtw_sennar_s1s2_2017_2020',
   assetId: 'users/soilwatch/Sudan/dtw_sennar_s1s2_2017_2020',
   region: county.geometry(),

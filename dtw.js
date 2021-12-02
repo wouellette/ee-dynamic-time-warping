@@ -17,8 +17,11 @@
  * @param {Array} patterns_arr: An array of dimension [k, n, t],
  *                              with k the number of patterns, n number of bands,
  *                              and t the number of timestamps in the time series.
+ * @param {ImageCollection} timeseries_col: An image collection with t number of images. Each image has n bands.
+                                            The image collection must contain the 'system:time_start' metadata property,
+                                            corresponding to the timestamp of the image.
+                                            Moreover, all images must be unmasked (i.e. not contained missing values).
  * @param {Dictionary} options: The options consist of the following parameters:
- *                              - @param {List} timeseries_IMG: The timestamps of the image time series (in units 'day-of-the-year').
  *                              - @param {Number} patterns_no: Number of patterns to iterate over.
  *                                If not specified, the patterns number is computed from the patterns array
  *                                (as long as function is not used inside of a mapping routine, will fail if not provided).
@@ -49,15 +52,27 @@
  * @returns {Image}
  * @ignore
  */
-exports.DTWDist = function(patterns_arr, stack, options){
-  stack=ee.Image(stack);
-  
-  var bandNames=stack.bandNames();
+exports.DTWDist = function(patterns_arr, timeseries_col, options){
+  // Sort Images in ascending order based on the 'system:time_start' metadata property
+  timeseries_col = ee.ImageCollection(timeseries_col).sort('system:time_start');
+
+  // Add a Day of Year attribute to each image in the collection
+  timeseries_col = timeseries_col.map(function(image){
+      var currentDate = ee.Date(image.get('system:time_start'));
+
+      // replace all masked values
+      var ddiff = currentDate
+                  .difference(ee.Date(ee.Date(timeseries_col.first().get('system:time_start'))
+                                              .format('YYYY').cat('-01-01')),
+                              'day');
+
+      return image.set({'doy': ddiff.toInt16()});
+    });
+
   patterns_arr = ee.Array(patterns_arr);
   var patterns_no = options.patterns_no || patterns_arr.length().get([0]);
   var band_no = options.band_no || patterns_arr.length().get([1]).subtract(1);
-  var timeseries_len = options.timeseries_len;
-  var timeseries_img = options.timeseries_img;
+  var timeseries_len = options.timeseries_len || timeseries_col.size();
   var patterns_len = options.patterns_len || patterns_arr.length().get([2]);
   var constraint_type = options.constraint_type || 'time-weighted';
   var weight_type = options.weight_type || 'logistic';
@@ -65,271 +80,147 @@ exports.DTWDist = function(patterns_arr, stack, options){
   var beta = options.beta || 50;
   var alpha = options.alpha || 0.1;
 
-  // This step calculates distance between NDVI_series and mean_NDVI of croppoints using DTW.
-  var dis_arr;
-  var time_arr;
-  var dis_mat;
-  var dis_list;
   var cost_weight;
-  var x1;
-  var y1;
-  var t1;
-  var x2;
-  var y2;
-  var t2;
-  
-  var matrix=ee.List.sequence(1, ee.Number(timeseries_len).subtract(1)).map(function(i){
-    var matrix_tmp=ee.List.sequence(1, ee.Number(patterns_len).subtract(1)).map(function(j){
-      return ee.List([i,j]);
+  var dis_arr;
+  var dis_mat;
+
+  // An iterative function providing the distance calculation for the distance matrix.
+  // Currently only supports Euclidean and Angular distances.
+  var _distCalc = function(img, j, k){
+
+    var wrap = function(n, previous2){
+     n = ee.Number(n);
+     previous2 = ee.List(previous2);
+
+     var x1 = img.select(n.subtract(1)).toArray().toInt16();
+     var y1 = patterns_arr.get(ee.List([ee.Number(k).subtract(1), n.subtract(1), j.subtract(1)]));
+
+     if (distance_type === 'euclidean') {
+         dis_arr = x1.subtract(y1).pow(2);
+     } else if (distance_type === 'angular') {
+         var img_prev = timeseries_col.filter(ee.Filter.lte('doy', img.get('doy')))
+                                      .limit(2, 'doy', false).sort('doy').first();
+         var x2 = img_prev.select(n.subtract(1)).toArray().toInt16();
+         var y2 = patterns_arr.get(ee.List([ee.Number(k).subtract(1), n.subtract(1), j.subtract(2)]));
+         dis_arr = x1.multiply(y1).add(x2.multiply(y2))
+                       .divide(x1.pow(2).add(x2.pow(2)).sqrt().multiply(y1.pow(2).add(y2.pow(2)).sqrt()))
+                       .acos();
+     }
+     return dis_arr.add(previous2)
+   }
+
+   return wrap
+  }
+
+  var matrix = ee.List.sequence(1, ee.Number(timeseries_len).subtract(1)).map(function(i){
+    var matrix_tmp = ee.List.sequence(1, ee.Number(patterns_len).subtract(1)).map(function(j){
+      return ee.List([i, j]);
     });
     return matrix_tmp;
   });
-  matrix=ee.List(matrix.iterate(function(x,previous){
+
+  matrix = ee.List(matrix.iterate(function(x, previous){
     return ee.List(previous).cat(ee.List(x));
-  },ee.List([])));
-  
-          
+  }, ee.List([])));
+
   var dtw_image_list = ee.List.sequence(1, patterns_no).map(function(k){
-    var dt_list;
-    if (distance_type === 'euclidean') {
+
       if (constraint_type === 'time-constrained') {
-    
-      dt_list=ee.List.sequence(1, timeseries_len).map(function (i) {
-        i = ee.Number(i);
-        var dt_list = ee.List.sequence(1, patterns_len).map(function (j) {
-          var time_fc=ee.List([]);
-          j = ee.Number(j);
-          var t1 = ee.Number(timeseries_img.get(i.subtract(1)));
-          var t2 = patterns_arr.get(ee.List([ee.Number(k).subtract(1),-1,j.subtract(1)]));
-          var time_arr= t1.subtract(t2).abs();
-          time_fc = time_fc.add(ee.Feature(null, {
-            'dt': time_arr,
-            'i': i,
-            'j': j
-          }));
-          return time_fc;
-        });
-        return dt_list;
-      });
-      dt_list=dt_list.flatten();
-      
-      dis_mat=ee.List(ee.List.sequence(1, timeseries_len).iterate(function(i,previous0){
-        i=ee.Number(i);
-        previous0=ee.List(previous0);
-        //filter the patterns within dt<=beta
-        //iterate over all time steps dt<=beta
-        var patterns_tmp=ee.FeatureCollection(dt_list).filter(ee.Filter.and(ee.Filter.eq('i',i),ee.Filter.lte('dt',beta))).aggregate_array('j');
-        var dis_list0=ee.List(patterns_tmp.iterate(function(j,previous){
-          j=ee.Number(j);
-          previous=ee.List(previous);
 
-          var dis_sum=ee.Image(ee.List.sequence(1, ee.Number(band_no)).iterate(function(n,previous2){
-            n=ee.Number(n);
-            previous2=ee.Image(previous2);
-            var x1=stack.select(ee.String(bandNames.get(n.subtract(1).multiply(ee.Number(timeseries_len)).add(i).subtract(1))));
-            x1=x1.toArray().toInt16();
-            var y1 = patterns_arr.get(ee.List([ee.Number(k).subtract(1), n.subtract(1), j.subtract(1)]));
-            var dis_arr = x1.subtract(y1).pow(2);
-            return dis_arr.add(previous2);
-          },ee.Image(0)));
-          
-          previous = previous.add(dis_sum.sqrt().set('j',j));
-          
-          return previous;
-        },ee.List([])));
-        //iterate over all time steps dt>beta
-        patterns_tmp=ee.FeatureCollection(dt_list).filter(ee.Filter.and(ee.Filter.eq('i',i),ee.Filter.gt('dt',beta))).aggregate_array('j');
-        var dis_list=ee.List(patterns_tmp.iterate(function(j,previous){
-          j=ee.Number(j);
-          previous=ee.List(previous);
-          previous = previous.add(ee.Image(1e6).set('j',j));
-          return previous;
-        },dis_list0));
-        //now sort in chronological order
-        dis_list=ee.ImageCollection(dis_list).sort('j').toList(dis_list.length());
-      
-        return previous0.add(dis_list);
-      
-      },ee.List([])));
+        dis_mat = ee.List(timeseries_col.iterate(function(img, previous0){
+          img = ee.Image(img);
+          previous0 = ee.List(previous0);
 
-    } else if (constraint_type === 'time-weighted') {
-      
-      dis_mat=ee.List(ee.List.sequence(1, timeseries_len).iterate(function(i,previous0){
-        i=ee.Number(i);
-        previous0=ee.List(previous0);      
-        var dis_list=ee.List(ee.List.sequence(1, patterns_len).iterate(function(j,previous){
-          j=ee.Number(j);
-          previous=ee.List(previous);
+          var dis_list = ee.List(ee.List.sequence(1, patterns_len).iterate(function(j, previous){
+            j = ee.Number(j);
+            previous = ee.List(previous);
 
-          var dis_sum=ee.Image(ee.List.sequence(1, ee.Number(band_no)).iterate(function(n,previous2){
-            n=ee.Number(n);
-            previous2=ee.Image(previous2);
-            var x1=stack.select(ee.String(bandNames.get(n.subtract(1).multiply(ee.Number(timeseries_len)).add(i).subtract(1))));
-            x1=x1.toArray().toInt16();
-            var y1 = patterns_arr.get(ee.List([ee.Number(k).subtract(1), n.subtract(1), j.subtract(1)]));
-            var dis_arr = x1.subtract(y1).pow(2);
-            return dis_arr.add(previous2);
-          },ee.Image(0)));
-          
-          //the doy bands come last in the stack
-          var t1=stack.select(ee.String(bandNames.get(ee.Number(band_no).multiply(ee.Number(timeseries_len)).add(i).subtract(1))));
-          t1=t1.toArray().toInt16();
-          var t2 = patterns_arr.get(ee.List([ee.Number(k).subtract(1), -1, j.subtract(1)]));
-          var time_arr = t1.subtract(t2).abs();
-  
-          var cost_weight;
-          if (weight_type === 'logistic') {
-            cost_weight = ee.Image(1).divide(ee.Image(1)
-                          .add(ee.Image(alpha).multiply(time_arr.subtract(beta))).exp());
-          } else if (weight_type === 'linear') {
-            cost_weight = ee.Image(alpha).multiply(time_arr).add(beta);
-          }
-          previous = previous.add(dis_sum.sqrt().add(cost_weight));
-        
-          return previous;
-        },ee.List([])));
-      
-        return previous0.add(dis_list);
-      
-      },ee.List([])));
-    }} 
-    if (distance_type === 'angular') {
-      if (constraint_type === 'time-constrained') {
-    
-      dt_list=ee.List.sequence(1, timeseries_len).map(function (i) {
-        i = ee.Number(i);
-        var dt_list = ee.List.sequence(1, patterns_len).map(function (j) {
-          var time_fc=ee.List([]);
-          j = ee.Number(j);
-          var t1 = ee.Number(timeseries_img.get(i.subtract(1)));
-          var t2 = patterns_arr.get(ee.List([ee.Number(k).subtract(1),-1,j.subtract(1)]));
-          var time_arr= t1.subtract(t2).abs();
-          time_fc = time_fc.add(ee.Feature(null, {
-            'dt': time_arr,
-            'i': i,
-            'j': j
-          }));
-          return time_fc;
-        });
-        return dt_list;
-      });
-      dt_list=dt_list.flatten();
-      
-      dis_mat=ee.List(ee.List.sequence(1, timeseries_len).iterate(function(i,previous0){
-        i=ee.Number(i);
-        previous0=ee.List(previous0);
-        //filter the patterns within dt<=beta
-        //iterate over all time steps dt<=beta
-        var patterns_tmp=ee.FeatureCollection(dt_list).filter(ee.Filter.and(ee.Filter.eq('i',i),ee.Filter.lte('dt',beta))).aggregate_array('j');
-        var dis_list0=ee.List(patterns_tmp.iterate(function(j,previous){
-          j=ee.Number(j);
-          previous=ee.List(previous);
+            //the doy bands come last in the stack
+            var t1 = ee.Number(img.get('doy'));
+            var t2 = patterns_arr.get(ee.List([ee.Number(k).subtract(1), -1, j.subtract(1)]));
+            var time_arr = t1.subtract(t2).abs();
 
-          var dis_sum=ee.Image(ee.List.sequence(1, ee.Number(band_no)).iterate(function(n,previous2){
-            n=ee.Number(n);
-            previous2=ee.Image(previous2);
-            var x1=stack.select(ee.String(bandNames.get(n.subtract(1).multiply(ee.Number(timeseries_len)).add(i).subtract(1))));
-            x1=x1.toArray().toInt16();
-            var y1 = patterns_arr.get(ee.List([ee.Number(k).subtract(1), n.subtract(1), j.subtract(1)]));
-            var x2=stack.select(ee.String(bandNames.get(n.subtract(1).multiply(ee.Number(timeseries_len)).add(i).subtract(2))));
-            var y2 = patterns_arr.get(ee.List([ee.Number(k).subtract(1), n.subtract(1), j.subtract(2)]));
-            var dis_arr = x1.multiply(y1).add(x2.multiply(y2))
-                      .divide(x1.pow(2).add(x2.pow(2)).sqrt().multiply(y1.pow(2).add(y2.pow(2)).sqrt()))
-                      .acos();
-            return ee.Algorithms.If(i.eq(1),previous2,dis_arr.add(previous2));
-          },ee.Image(0)));
-          
-          previous = previous.add(dis_sum.sqrt().set('j',j));
-          
-          return previous;
-        },ee.List([])));
-        //iterate over all time steps dt>beta
-        patterns_tmp=ee.FeatureCollection(dt_list).filter(ee.Filter.and(ee.Filter.eq('i',i),ee.Filter.gt('dt',beta))).aggregate_array('j');
-        var dis_list=ee.List(patterns_tmp.iterate(function(j,previous){
-          j=ee.Number(j);
-          previous=ee.List(previous);
-          previous = previous.add(ee.Image(1e6).set('j',j));
-          return previous;
-        },dis_list0));
-        //now sort in chronological order
-        dis_list=ee.ImageCollection(dis_list).sort('j').toList(dis_list.length());
-      
-        return previous0.add(dis_list);
-      
-      },ee.List([])));
+            var constraint = time_arr.gt(beta).multiply(1e6).add(1);
 
-    } else if (constraint_type === 'time-weighted') {
-      
-      dis_mat=ee.List(ee.List.sequence(1, timeseries_len).iterate(function(i,previous0){
-        i=ee.Number(i);
-        previous0=ee.List(previous0);      
-        var dis_list=ee.List(ee.List.sequence(1, patterns_len).iterate(function(j,previous){
-          j=ee.Number(j);
-          previous=ee.List(previous);
+            var dis_sum = ee.Image(ee.List.sequence(1, ee.Number(band_no)).iterate(_distCalc(img, j, k),
+                                                                                   ee.Image(0)))
+                          .multiply(constraint);
 
-          var dis_sum=ee.Image(ee.List.sequence(1, ee.Number(band_no)).iterate(function(n,previous2){
-            n=ee.Number(n);
-            previous2=ee.Image(previous2);
-            var x1=stack.select(ee.String(bandNames.get(n.subtract(1).multiply(ee.Number(timeseries_len)).add(i).subtract(1))));
-            x1=x1.toArray().toInt16();
-            var y1 = patterns_arr.get(ee.List([ee.Number(k).subtract(1), n.subtract(1), j.subtract(1)]));
-            var x2=stack.select(ee.String(bandNames.get(n.subtract(1).multiply(ee.Number(timeseries_len)).add(i).subtract(2))));
-            var y2 = patterns_arr.get(ee.List([ee.Number(k).subtract(1), n.subtract(1), j.subtract(2)]));
-            var dis_arr = x1.multiply(y1).add(x2.multiply(y2))
-                      .divide(x1.pow(2).add(x2.pow(2)).sqrt().multiply(y1.pow(2).add(y2.pow(2)).sqrt()))
-                      .acos();
-            return ee.Algorithms.If(i.eq(1),previous2,dis_arr.add(previous2));
-          },ee.Image(0)));
-          
-          //the doy bands come last in the stack
-          var t1=stack.select(ee.String(bandNames.get(ee.Number(band_no).multiply(ee.Number(timeseries_len)).add(i).subtract(1))));
-          t1=t1.toArray().toInt16();
-          var t2 = patterns_arr.get(ee.List([ee.Number(k).subtract(1), -1, j.subtract(1)]));
-          var time_arr = t1.subtract(t2).abs();
-  
-          var cost_weight;
-          if (weight_type === 'logistic') {
-            cost_weight = ee.Image(1).divide(ee.Image(1)
-                          .add(ee.Image(alpha).multiply(time_arr.subtract(beta))).exp());
-          } else if (weight_type === 'linear') {
-            cost_weight = ee.Image(alpha).multiply(time_arr).add(beta);
-          }
-          previous = previous.add(dis_sum.sqrt().add(cost_weight));
-        
-          return previous;
-        },ee.List([])));
-      
-        return previous0.add(dis_list);
-      
-      },ee.List([])));
-    }}
+            if (distance_type === 'angular') {
+              dis_sum = dis_sum.multiply(t1.neq(timeseries_col.first().get('doy')));
+            }
+
+            return previous.add(dis_sum.sqrt());
+          }, ee.List([])));
+
+          return previous0.add(dis_list);
+
+        }, ee.List([])));
+
+      } else if (constraint_type === 'time-weighted') {
+
+          dis_mat = ee.List(timeseries_col.iterate(function(img, previous0){
+            img = ee.Image(img);
+            previous0 = ee.List(previous0);
+
+            var dis_list = ee.List(ee.List.sequence(1, patterns_len).iterate(function(j, previous){
+              j = ee.Number(j);
+              previous = ee.List(previous);
+
+              //the doy bands come last in the stack
+              var t1 = ee.Number(img.get('doy'));
+              var t2 = patterns_arr.get(ee.List([ee.Number(k).subtract(1), -1, j.subtract(1)]));
+              var time_arr = t1.subtract(t2).abs();
+
+              var dis_sum = ee.Image(ee.List.sequence(1, ee.Number(band_no)).iterate(_distCalc(img, j, k),
+                                                                                     ee.Image(0)));
+              if (distance_type === 'angular') {
+                dis_sum = dis_sum.multiply(t1.neq(timeseries_col.first().get('doy')));
+              }
+
+              if (weight_type === 'logistic') {
+                cost_weight = ee.Image(1)
+                              .divide(ee.Image(1).add(ee.Image(alpha)
+                                      .multiply(time_arr.subtract(beta))).exp());
+              } else if (weight_type === 'linear') {
+                cost_weight = ee.Image(alpha).multiply(time_arr).add(beta);
+              }
+
+              return previous.add(dis_sum.sqrt().add(cost_weight));
+            }, ee.List([])));
+
+            return previous0.add(dis_list);
+
+          }, ee.List([])));
+      }
+
     var D_mat = ee.List([]);
     var dis = ee.List(dis_mat.get(0)).get(0);
     var d_mat = D_mat.add(dis);
 
-    d_mat=ee.List(ee.List.sequence(1, ee.Number(patterns_len).subtract(1)).iterate(function(j,previous){
-      j=ee.Number(j);
-      previous=ee.List(previous);
+    d_mat = ee.List(ee.List.sequence(1, ee.Number(patterns_len).subtract(1)).iterate(function(j, previous){
+      j = ee.Number(j);
+      previous = ee.List(previous);
       var dis = ee.Image(previous.get(j.subtract(1))).add(ee.List(dis_mat.get(0)).get(j));
       return previous.add(dis);
-    },d_mat));
+    }, d_mat));
     D_mat = D_mat.add(d_mat);
-    
-    D_mat=ee.List(ee.List.sequence(1, ee.Number(timeseries_len).subtract(1)).iterate(function(i,previous){
-      i=ee.Number(i);
-      previous=ee.List(previous);
+
+    D_mat = ee.List(ee.List.sequence(1, ee.Number(timeseries_len).subtract(1)).iterate(function(i, previous){
+      i = ee.Number(i);
+      previous = ee.List(previous);
       var dis = ee.Image(ee.List(previous.get(i.subtract(1))).get(0)).add(ee.List(dis_mat.get(i)).get(0));
       return previous.add(ee.List(previous.get(i.subtract(1))).set(0, dis));
-    },D_mat));
-    
-    D_mat=ee.List(ee.List.sequence(0, matrix.length().subtract(1)).iterate(function(x,previous){
-      var i=ee.Number(ee.List(matrix.get(x)).get(0));
-      var j=ee.Number(ee.List(matrix.get(x)).get(1));
-      previous=ee.List(previous);
+    }, D_mat));
+
+    D_mat = ee.List(ee.List.sequence(0, matrix.length().subtract(1)).iterate(function(x, previous){
+      var i = ee.Number(ee.List(matrix.get(x)).get(0));
+      var j = ee.Number(ee.List(matrix.get(x)).get(1));
+      previous = ee.List(previous);
       var dis = ee.Image(ee.List(previous.get(i.subtract(1))).get(j)).min(ee.List(previous.get(i)).get(j.subtract(1)))
         .min(ee.List(previous.get(i.subtract(1))).get(j.subtract(1))).add(ee.List(dis_mat.get(i)).get(j));
       return previous.set(i, ee.List(previous.get(i)).set(j, dis));
-    },D_mat));
+    }, D_mat));
 
     return ee.Image(ee.List(D_mat.get(-1)).get(-1))
                                           .arrayProject([0])
@@ -338,7 +229,6 @@ exports.DTWDist = function(patterns_arr, stack, options){
 
   return ee.ImageCollection(dtw_image_list).min().toUint16();
 };
-
 
 /**
  * A utility that converts the feature collection containing the signatures/patterns to an dtw-ready array.
