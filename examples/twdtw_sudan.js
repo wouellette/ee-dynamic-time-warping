@@ -154,11 +154,14 @@ var DTWClassification = function(year, collection_type){
       var meanImage = joined.filterDate(currentDate.advance(-AGG_INTERVAL-1, 'day'),
                                            currentDate.advance(AGG_INTERVAL+1, 'day')).mean();
       // replace all masked values
-      var ddiff = currentDate.difference(ee.Date(ee.String(date_range.get('start'))), 'day');
+      var ddiff = currentDate.difference(ee.Date(ee.String(date_range.get('start')))
+                                         .format('YYYY').cat('-01-01'),
+                                         'day');
       return meanImage.where(image, image).unmask(0)
       .addBands(ee.Image(ddiff).rename('doy').toInt16())
+      .set({'doy': ddiff.toInt16()})
       .copyProperties(image, ['system:time_start']);
-    });
+    }).sort('system:time_start');
 
   var s1s2_stack = ee.Image(joined.iterate(function(image, previous){return ee.Image(previous).addBands(image)}, ee.Image([])))
                    .select(ee.List(S1_BAND_LIST.concat(S2_BAND_LIST)).add(DOY_BAND).map(function(band){return ee.String(band).cat('.*')}));
