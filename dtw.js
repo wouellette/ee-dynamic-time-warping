@@ -144,11 +144,8 @@ exports.DTWDist = function(patterns_arr, timeseries_col, options){
             var dis_list0 = patterns_tmp.map(function(j){
               j = ee.Number(j);
 
-              //var constraint = time_arr.gt(beta).multiply(1e6).add(1);
-
               var dis_sum = ee.Image(ee.List.sequence(1, ee.Number(band_no)).iterate(_distCalc(img, j, k),
                                                                                      ee.Image(0)));
-                            //.multiply(constraint);
 
               if (distance_type === 'angular') {
                 dis_sum = dis_sum.multiply(t1.neq(timeseries_col.first().get('doy')));
