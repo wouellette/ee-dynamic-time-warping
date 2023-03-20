@@ -196,7 +196,7 @@ exports.DTWDist = function(patterns_arr, timeseries_col, options){
               if (weight_type === 'logistic') {
                 cost_weight = ee.Image(1)
                               .divide(ee.Image(1).add(ee.Image(alpha)
-                                      .multiply(time_arr.subtract(beta))).exp());
+                                      .multiply(time_arr.subtract(beta)).exp()));
               } else if (weight_type === 'linear') {
                 cost_weight = ee.Image(alpha).multiply(time_arr).add(beta);
               }
